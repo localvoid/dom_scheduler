@@ -54,7 +54,14 @@ class _WriteGroup implements Comparable {
 
   _WriteGroup(this.priority);
 
-  int compareTo(_WriteGroup other) => priority.compareTo(other.priority);
+  int compareTo(_WriteGroup other) {
+    if (priority < other.priority) {
+      return 1;
+    } else if (priority > other.priority) {
+      return -1;
+    }
+    return 0;
+  }
 }
 
 /// Frame tasks.
