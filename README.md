@@ -27,7 +27,7 @@ It will perform write and read tasks in batches until there are no
 write or read tasks left.
 
 Write tasks sorted by their priority, and the tasks with the lowest
-value in the priority property is executed first. It is implemented
+value in the priority property are executed first. It is implemented
 this way because most of the time tasks priority will be its depth in
 the DOM.
 

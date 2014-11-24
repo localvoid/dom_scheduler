@@ -2,87 +2,15 @@
 // AUTHORS file for details. All rights reserved. Use of this source code
 // is governed by a BSD-style license that can be found in the LICENSE file.
 
-/// DOM Tasks Scheduler.
-library dom_scheduler;
-
-import 'dart:async';
-import 'dart:collection';
-import 'dart:html' as html;
-import 'package:collection/priority_queue.dart';
-
-/// Write groups sorted by their priority to prevent unnecessary writes when the
-/// parent removes its children.
-class _WriteGroup implements Comparable {
-  final int priority;
-
-  Completer completer;
-
-  _WriteGroup(this.priority);
-
-  int compareTo(_WriteGroup other) => priority.compareTo(other.priority);
-}
-
-/// Frame tasks
-class Frame {
-  /// Write groups indexed by priority
-  List<_WriteGroup> writeGroups = [];
-  HeapPriorityQueue<_WriteGroup> writeQueue = new HeapPriorityQueue<_WriteGroup>();
-  Completer readCompleter;
-  Completer afterCompleter;
-
-  /// Returns [Future] that completes when [Scheduler] launches write
-  /// tasks for that [Frame]
-  Future write(int priority) {
-    if (priority >= writeGroups.length) {
-      var i = writeGroups.length;
-      while (i <= priority) {
-        writeGroups.add(new _WriteGroup(i++));
-      }
-    }
-    final g = writeGroups[priority];
-    if (g.completer == null) {
-      g.completer = new Completer();
-      writeQueue.add(g);
-    }
-    return g.completer.future;
-  }
-
-  /// Returns [Future] that completes when [Scheduler] launches read
-  /// tasks for that [Frame]
-  Future read() {
-    if (readCompleter == null) {
-      readCompleter = new Completer();
-    }
-    return readCompleter.future;
-  }
-
-  /// Returns [Future] that completes when [Scheduler] finishes all
-  /// read and write tasks for that [Frame]
-  Future after() {
-    if (afterCompleter == null) {
-      afterCompleter = new Completer();
-    }
-    return afterCompleter.future;
-  }
-}
-
-/// [Scheduler] runs [Frame]'s write/read tasks.
+/// DOM Scheduler for write and read tasks.
 ///
-/// Whenever you add any task to the [nextFrame], Scheduler starts waiting
-/// for the next frame with the requestAnimationFrame call and then runs all
-/// tasks inside the Scheduler's [zone].
-///
-/// [Scheduler] runs all write tasks and microtasks that were registered
-/// in its [zone], when all this tasks are finished, it starts running
-/// reading tasks and microtasks, then it checks if there any write tasks
-/// were added after read batch, if anything is added, it performs the loop
-/// again, otherwise it runs all `after` tasks and finishes.
+/// The scheduler algorithm is quite simple and looks like this:
 ///
 /// ```dart
 /// while (writeTasks.isNotEmpty) {
 ///   while (writeTasks.isNotEmpty) {
-///     writeTasks.removeFirst().start();
-///     runMicrotasks();
+///      writeTasks.removeFirst().start();
+///      runMicrotasks();
 ///   }
 ///   while (readTasks.isNotEmpty) {
 ///     readTasks.removeFirst().start();
@@ -95,11 +23,100 @@ class Frame {
 /// }
 /// ```
 ///
-/// By executing tasks this way we can guarantee almost optimal read/write
-/// batching.
+/// It will perform write and read tasks in batches until there are no
+/// write or read tasks left.
 ///
-/// TODO: add (intrusive) lists for animation tasks
-class Scheduler {
+/// Write tasks sorted by their priority, and the tasks with the lowest
+/// value in the priority property is executed first. It is implemented
+/// this way because most of the time tasks priority will be its depth in
+/// the DOM.
+///
+/// Scheduler runs in its own `Zone` and intercepts all microtasks, this
+/// way it is possible to use `Future`s to track dependencies between
+/// tasks.
+library dom_scheduler;
+
+// TODO: swap and reset frame objects.
+
+import 'dart:async';
+import 'dart:collection';
+import 'dart:html' as html;
+import 'package:collection/priority_queue.dart';
+
+/// Write groups sorted by priority.
+///
+/// It is used as an optimization to make adding write tasks as an O(1)
+/// operation.
+class _WriteGroup implements Comparable {
+  final int priority;
+
+  Completer _completer;
+
+  _WriteGroup(this.priority);
+
+  int compareTo(_WriteGroup other) => priority.compareTo(other.priority);
+}
+
+/// Frame tasks.
+class Frame {
+  static const int maxPriority = (1 << 31) - 1;
+
+  /// Write groups indexed by priority
+  List<_WriteGroup> _writeGroups = [];
+  _WriteGroup _maxPriorityWriteGroup;
+
+  HeapPriorityQueue<_WriteGroup> _writeQueue =
+      new HeapPriorityQueue<_WriteGroup>();
+
+  Completer _readCompleter;
+  Completer _afterCompleter;
+
+  /// Returns `Future` that will be completed when [DOMScheduler] starts
+  /// executing write tasks with this priority.
+  Future write([int priority = maxPriority]) {
+    if (priority == maxPriority) {
+      if (_maxPriorityWriteGroup == null) {
+        _maxPriorityWriteGroup = new _WriteGroup(maxPriority);
+      }
+      return _maxPriorityWriteGroup._completer.future;
+    }
+
+    if (priority >= _writeGroups.length) {
+      var i = _writeGroups.length;
+      while (i <= priority) {
+        _writeGroups.add(new _WriteGroup(i++));
+      }
+    }
+    final g = _writeGroups[priority];
+    if (g._completer == null) {
+      g._completer = new Completer();
+      _writeQueue.add(g);
+    }
+    return g._completer.future;
+  }
+
+  /// Returns `Future` that will be completed when [DOMScheduler] starts
+  /// executing read tasks.
+  Future read() {
+    if (_readCompleter == null) {
+      _readCompleter = new Completer();
+    }
+    return _readCompleter.future;
+  }
+
+  /// Returns `Future` that will be completed when [DOMScheduler] finishes
+  /// executing all write and read tasks.
+  Future after() {
+    if (_afterCompleter == null) {
+      _afterCompleter = new Completer();
+    }
+    return _afterCompleter.future;
+  }
+}
+
+/// [DOMScheduler] for write and read tasks.
+class DOMScheduler {
+  // TODO: add (intrusive) lists for animation tasks
   bool _running = false;
   Queue<Function> _currentTasks = new Queue<Function>();
 
@@ -110,7 +127,7 @@ class Scheduler {
   Frame _currentFrame;
   Frame _nextFrame;
 
-  Scheduler() {
+  DOMScheduler() {
     _zoneSpec = new ZoneSpecification(scheduleMicrotask: _scheduleMicrotask);
     _zone = Zone.current.fork(specification: _zoneSpec);
   }
@@ -118,13 +135,13 @@ class Scheduler {
   /// Scheduler [Zone]
   Zone get zone => _zone;
 
-  /// Current [Frame]
+  /// [Frame] that contains tasks for the current animation frame
   Frame get currentFrame {
     assert(_currentFrame != null);
     return _currentFrame;
   }
 
-  /// Next [Frame]
+  /// [Frame] that contains tasks for the next animation frame.
   Frame get nextFrame {
     if (_nextFrame == null) {
       _nextFrame = new Frame();
@@ -160,34 +177,34 @@ class Scheduler {
       _running = true;
       _currentFrame = _nextFrame;
       _nextFrame = null;
-      final wq = _currentFrame.writeQueue;
+      final wq = _currentFrame._writeQueue;
 
       do {
         while (wq.isNotEmpty) {
           final writeGroup = wq.removeFirst();
-          writeGroup.completer.complete();
+          writeGroup._completer.complete();
           _runTasks();
-          writeGroup.completer = null;
+          writeGroup._completer = null;
         }
 
-        if (_currentFrame.readCompleter != null) {
-          _currentFrame.readCompleter.complete();
+        if (_currentFrame._readCompleter != null) {
+          _currentFrame._readCompleter.complete();
           _runTasks();
-          _currentFrame.readCompleter = null;
+          _currentFrame._readCompleter = null;
         }
       } while (wq.isNotEmpty);
 
-      if (_currentFrame.afterCompleter != null) {
-        _currentFrame.afterCompleter.complete();
+      if (_currentFrame._afterCompleter != null) {
+        _currentFrame._afterCompleter.complete();
         _runTasks();
-        _currentFrame.afterCompleter = null;
+        _currentFrame._afterCompleter = null;
       }
       _running = false;
     });
 
   }
 
-  /// Force [Scheduler] to run tasks for the [nextFrame].
+  /// Force [DOMScheduler] to run tasks for the [nextFrame].
   void forceNextFrame() {
     if (_rafId != 0) {
       html.window.cancelAnimationFrame(_rafId);
