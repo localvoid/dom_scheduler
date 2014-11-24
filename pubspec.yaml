@@ -1,0 +1,9 @@
+name: dom_scheduler
+version: 0.0.1
+author: Boris Kaul <localvoid@gmail.com>
+description: DOM Scheduler for read/write tasks.
+homepage: https://github.com/localvoid/dom_scheduler
+environment:
+  sdk: '>=1.6.0'
+dependencies:
+  collection: '>=1.0.0 <2.0.0'
