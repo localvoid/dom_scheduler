@@ -36,8 +36,6 @@
 /// tasks.
 library dom_scheduler;
 
-// TODO: swap and reset frame objects.
-
 import 'dart:async';
 import 'dart:collection';
 import 'dart:html' as html;
@@ -131,8 +129,8 @@ class DOMScheduler {
   Zone _zone;
 
   int _rafId = 0;
-  Frame _currentFrame;
-  Frame _nextFrame;
+  Frame _currentFrame = new Frame();
+  Frame _nextFrame = new Frame();
 
   DOMScheduler() {
     _zoneSpec = new ZoneSpecification(scheduleMicrotask: _scheduleMicrotask);
@@ -144,16 +142,13 @@ class DOMScheduler {
 
   /// [Frame] that contains tasks for the current animation frame
   Frame get currentFrame {
-    assert(_currentFrame != null);
+    assert(_running);
     return _currentFrame;
   }
 
   /// [Frame] that contains tasks for the next animation frame.
   Frame get nextFrame {
-    if (_nextFrame == null) {
-      _nextFrame = new Frame();
-      _requestAnimationFrame();
-    }
+    _requestAnimationFrame();
     return _nextFrame;
   }
 
@@ -182,8 +177,9 @@ class DOMScheduler {
 
     _zone.run(() {
       _running = true;
+      final tmp = _currentFrame;
       _currentFrame = _nextFrame;
-      _nextFrame = null;
+      _nextFrame = tmp;
       final wq = _currentFrame._writeQueue;
 
       do {
