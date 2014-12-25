@@ -64,11 +64,11 @@ class _WriteGroup implements Comparable {
 
 /// Frame tasks.
 class Frame {
-  static const int maxPriority = (1 << 31) - 1;
+  static const int lowestPriority = (1 << 31) - 1;
 
   /// Write groups indexed by priority
   List<_WriteGroup> _writeGroups = [];
-  _WriteGroup _maxPriorityWriteGroup;
+  _WriteGroup _lowestPriorityWriteGroup;
 
   HeapPriorityQueue<_WriteGroup> _writeQueue =
       new HeapPriorityQueue<_WriteGroup>();
@@ -78,12 +78,13 @@ class Frame {
 
   /// Returns `Future` that will be completed when [DOMScheduler] starts
   /// executing write tasks with this priority.
-  Future write([int priority = maxPriority]) {
-    if (priority == maxPriority) {
-      if (_maxPriorityWriteGroup == null) {
-        _maxPriorityWriteGroup = new _WriteGroup(maxPriority);
+  Future write([int priority = lowestPriority]) {
+    if (priority == lowestPriority) {
+      if (_lowestPriorityWriteGroup == null) {
+        _lowestPriorityWriteGroup = new _WriteGroup(lowestPriority);
+        _lowestPriorityWriteGroup._completer = new Completer();
       }
-      return _maxPriorityWriteGroup._completer.future;
+      return _lowestPriorityWriteGroup._completer.future;
     }
 
     if (priority >= _writeGroups.length) {
@@ -188,6 +189,11 @@ class DOMScheduler {
           writeGroup._completer.complete();
           _runTasks();
           writeGroup._completer = null;
+        }
+        if (_currentFrame._lowestPriorityWriteGroup != null) {
+          _currentFrame._lowestPriorityWriteGroup._completer.complete();
+          _runTasks();
+          _currentFrame._lowestPriorityWriteGroup = null;
         }
 
         if (_currentFrame._readCompleter != null) {
