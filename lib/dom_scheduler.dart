@@ -183,6 +183,7 @@ class DOMScheduler {
       _nextFrame = tmp;
       final wq = _currentFrame._writeQueue;
 
+      // TODO: refactor!
       do {
         while (wq.isNotEmpty) {
           final writeGroup = wq.removeFirst();
@@ -201,7 +202,7 @@ class DOMScheduler {
           _runTasks();
           _currentFrame._readCompleter = null;
         }
-      } while (wq.isNotEmpty);
+      } while (wq.isNotEmpty || _currentFrame._lowestPriorityWriteGroup != null);
 
       if (_currentFrame._afterCompleter != null) {
         _currentFrame._afterCompleter.complete();
